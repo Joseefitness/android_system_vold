@@ -7,4 +7,6 @@ service vold /system/bin/vold \
     shutdown critical
     group root reserved_disk
     user root
-    reboot_on_failure reboot,vold-failed
+    # vold can crash on first boot here (cgroup/SELinux), so avoid the
+    # reboot trigger and let init continue instead of looping.
+    # reboot_on_failure reboot,vold-failed

@@ -94,6 +94,14 @@ static bool isFsKeyringSupportedImpl() {
                      "session keyring";
         return false;
     }
+    // 3.10 fscrypt v1 backport returns EINVAL (not ENOTTY) on the NULL probe:
+    // the v2 ioctl number exists but has no v2 handler. Treat as unsupported so
+    // we fall back to the session keyring (else installKey fails with ENOTTY).
+    if (errno == EINVAL) {
+        LOG(INFO) << "FS_IOC_ADD_ENCRYPTION_KEY returned EINVAL on NULL probe (legacy fscrypt "
+                     "v1 backport).  Falling back to session keyring";
+        return false;
+    }
     if (errno != EFAULT) {
         PLOG(WARNING) << "Unexpected error from FS_IOC_ADD_ENCRYPTION_KEY";
     }
