@@ -189,7 +189,11 @@ status_t Format(const std::string& source, unsigned long numSectors, const std::
 
     bool needs_casefold =
             android::base::GetBoolProperty("external_storage.casefold.enabled", false);
-    bool needs_projid = true;
+    // EXT4 PROJECT quota (RO_COMPAT 0x2000) needs kernel >= 4.4; 3.10 rejects the
+    // mount with "unsupported optional features (2000)". Gate via prop (default
+    // true keeps stock behavior); the device sets ro.vold.projid_quotas=false.
+    bool needs_projid =
+            android::base::GetBoolProperty("ro.vold.projid_quotas", true);
 
     if (needs_projid) {
         cmd.push_back("-I");

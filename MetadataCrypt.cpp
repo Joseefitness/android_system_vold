@@ -172,25 +172,34 @@ static bool create_crypto_blk_dev(const std::string& dm_name, const std::string&
     }
     std::string hex_key(hex_key_buffer.data(), hex_key_buffer.size());
 
-    auto target = std::make_unique<DmTargetDefaultKey>(0, *nr_sec, options.cipher.get_kernel_name(),
-                                                       hex_key, blk_device, 0);
-    if (options.use_legacy_options_format) target->SetUseLegacyOptionsFormat();
-    if (options.set_dun) target->SetSetDun();
-
-    switch (options.key_type) {
-        case KeyType::kRaw:
-            break;
-        case KeyType::kHwWrappedV0:
-        case KeyType::kHwWrapped:
-            // The dm-default-key option "wrappedkey_v0" actually works for both wrapped key
-            // versions.  Eventually a "wrappedkey" alias should be added and used, but for now just
-            // continue using "wrappedkey_v0".
-            target->SetWrappedKeyV0();
-            break;
-    }
-
     DmTable table;
-    table.AddTarget(std::move(target));
+    if (is_userdata) {
+        // 3.10 has dm-crypt but no dm-default-key (mainline 4.14+), so /data uses a
+        // plain dm-crypt target. Its table parser accepts only allow_discards; 512B
+        // sectors (sector_size=0) — sector_size:N / iv_large_sectors both EINVAL.
+        auto target = std::make_unique<DmTargetCrypt>(0, *nr_sec, options.cipher.get_kernel_name(),
+                                                      hex_key, 0, blk_device, 0);
+        target->AllowDiscards();
+        table.AddTarget(std::move(target));
+    } else {
+        // External/adoptable volumes: keep dm-default-key unchanged.
+        auto target = std::make_unique<DmTargetDefaultKey>(
+                0, *nr_sec, options.cipher.get_kernel_name(), hex_key, blk_device, 0);
+        if (options.use_legacy_options_format) target->SetUseLegacyOptionsFormat();
+        if (options.set_dun) target->SetSetDun();
+        switch (options.key_type) {
+            case KeyType::kRaw:
+                break;
+            case KeyType::kHwWrappedV0:
+            case KeyType::kHwWrapped:
+                // The dm-default-key option "wrappedkey_v0" actually works for both wrapped key
+                // versions.  Eventually a "wrappedkey" alias should be added and used, but for now
+                // just continue using "wrappedkey_v0".
+                target->SetWrappedKeyV0();
+                break;
+        }
+        table.AddTarget(std::move(target));
+    }
 
     auto& dm = DeviceMapper::Instance();
     if (dm_name == kDmNameUserdata && dm.GetState(dm_name) == DmDeviceState::SUSPENDED) {
@@ -356,6 +365,20 @@ bool fscrypt_mount_metadata_encrypted(const std::string& blk_device, const std::
         default_metadata_key_dir = default_metadata_key_dir + "/default";
         use_subdirs = true;
     }
+
+    // No persisted metadata key means the data isn't valid ciphertext, but fs_mgr may
+    // still report should_format=false; encrypt_inplace over stale plaintext corrupts userdata.
+    if (needs_encrypt && !should_format) {
+        struct stat sb;
+        auto encrypted_key_path = default_metadata_key_dir + "/encrypted_key";
+        if (stat(encrypted_key_path.c_str(), &sb) != 0) {
+            LOG(WARNING) << "fscrypt_mount_metadata_encrypted: no existing metadata key at "
+                         << encrypted_key_path
+                         << "; forcing should_format=true (underlying ciphertext unrecoverable)";
+            should_format = true;
+        }
+    }
+
     auto gen = needs_encrypt ? makeGen(options) : neverGen();
     KeyBuffer key;
     if (!read_key(default_metadata_key_dir, gen, true, &key)) {
