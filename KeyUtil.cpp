@@ -226,6 +226,11 @@ static bool isFsKeyringSupportedImpl() {
                      "session keyring";
         return false;
     }
+    if (errno == EINVAL) {
+        LOG(INFO) << "FS_IOC_ADD_ENCRYPTION_KEY returned EINVAL on NULL probe (legacy fscrypt "
+                     "v1 backport).  Falling back to session keyring";
+        return false;
+    }
     if (errno != EFAULT) {
         PLOG(WARNING) << "Unexpected error from FS_IOC_ADD_ENCRYPTION_KEY";
     }
